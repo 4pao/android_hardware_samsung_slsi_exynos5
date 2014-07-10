@@ -60,24 +60,9 @@
 const size_t NUM_HW_WIN_FB_PHY = 2;
 #undef DUAL_VIDEO_OVERLAY_SUPPORT
 #endif
-
-#ifndef FIMD_WORD_SIZE_BYTES
-#define FIMD_WORD_SIZE_BYTES   8
-#endif
-
-#ifndef FIMD_BURSTLEN
-#define FIMD_BURSTLEN   16
-#endif
-
 const size_t NUM_HW_WINDOWS = 5;
 const size_t NO_FB_NEEDED = NUM_HW_WINDOWS + 1;
-#ifndef FIMD_BW_OVERLAP_CHECK
-const size_t MAX_NUM_FIMD_DMA_CH = 2;
-const int FIMD_DMA_CH_IDX[NUM_HW_WINDOWS] = {0, 1, 1, 1, 0};
-//int FIMD_DMA_CH_BW[MAX_NUM_FIMD_DMA_CH] = {2560 * 1600, 2560 * 1600};
-//int FIMD_DMA_CH_OVERLAP_CNT[MAX_NUM_FIMD_DMA_CH] = {1, 1};
-#endif
-
+const size_t MAX_PIXELS = 2560 * 1600 * 2;
 const size_t GSC_W_ALIGNMENT = 16;
 const size_t GSC_H_ALIGNMENT = 16;
 const size_t GSC_DST_H_ALIGNMENT_RGB888 = 1;
@@ -92,11 +77,7 @@ const size_t HDMI_GSC_SBS_IDX = 5;
 const size_t HDMI_GSC_TB_IDX = 6;
 const int FIMD_GSC_USAGE_IDX[] = {FIMD_GSC_IDX, FIMD_GSC_SEC_IDX,
                                                     FIMD_GSC_SBS_IDX, FIMD_GSC_TB_IDX};
-#ifndef USES_ONLY_GSC0_GSC1
 const int AVAILABLE_GSC_UNITS[] = { 0, 3, 0, 0, 3, 3, 3 };
-#else
-const int AVAILABLE_GSC_UNITS[] = { 0, 1, 0, 0, 1, 1, 1 };
-#endif
 #else
 const size_t FIMD_GSC_IDX = 0;
 const size_t HDMI_GSC_IDX = 1;
@@ -104,15 +85,11 @@ const size_t FIMD_GSC_SBS_IDX = 2;
 const size_t FIMD_GSC_TB_IDX = 3;
 const size_t HDMI_GSC_SBS_IDX = 4;
 const size_t HDMI_GSC_TB_IDX = 5;
-#ifndef USES_ONLY_GSC0_GSC1
 const int AVAILABLE_GSC_UNITS[] = { 0, 3, 0, 0, 3, 3 };
-#else
-const int AVAILABLE_GSC_UNITS[] = { 0, 1, 0, 0, 1, 1 };
-#endif
 #endif
 const size_t NUM_GSC_UNITS = sizeof(AVAILABLE_GSC_UNITS) /
         sizeof(AVAILABLE_GSC_UNITS[0]);
-const size_t BURSTLEN_BYTES = FIMD_BURSTLEN * FIMD_WORD_SIZE_BYTES;
+const size_t BURSTLEN_BYTES = 16 * 8;
 const size_t NUM_HDMI_BUFFERS = 3;
 
 #ifdef SKIP_STATIC_LAYER_COMP
@@ -123,13 +100,20 @@ const size_t NUM_HDMI_BUFFERS = 3;
 #define NUM_VIRT_OVER_HDMI 5
 #endif
 
+#ifdef HWC_SERVICES
+#include "../libhwcService/ExynosHWCService.h"
+namespace android {
+class ExynosHWCService;
+}
+#endif
+
 #define GSC_SKIP_DUPLICATE_FRAME_PROCESSING
 
 #define HWC_PAGE_MISS_TH  5
 
 #ifdef HWC_DYNAMIC_RECOMPOSITION
 #define HWC_FIMD_BW_TH  1   /* valid range 1 to 5 */
-#define HWC_FPS_TH          5    /* valid range 1 to 60 */
+#define HWC_FPS_TH          3    /* valid range 1 to 60 */
 #define VSYNC_INTERVAL (1000000000.0 / 60)
 typedef enum _COMPOS_MODE_SWITCH {
     NO_MODE_SWITCH,
@@ -285,6 +269,7 @@ struct exynos5_hwc_composer_device_1_t {
 #define HDMI_PRESET_DEFAULT V4L2_DV_1080P60
 #define HDMI_PRESET_ERROR -1
 
+    android::ExynosHWCService   *mHWCService;
     int mHdmiPreset;
     int mHdmiCurrentPreset;
     bool mHdmiResolutionChanged;
@@ -354,9 +339,7 @@ struct exynos5_hwc_composer_device_1_t {
 #endif
 
     bool                    need_gsc_op_twice;
-    bool                    bypass_skip_static_layer;
-    int                     fimd_dma_chan_max_bw[MAX_NUM_FIMD_DMA_CH];
-    int                     fimd_dma_chan_max_overlap_cnt[MAX_NUM_FIMD_DMA_CH];
+    bool                    is_3layer_overlapped;
 };
 
 #if defined(HWC_SERVICES)

@@ -59,10 +59,6 @@ ifeq ($(BOARD_HDMI_INCAPABLE), true)
 	LOCAL_CFLAGS += -DHDMI_INCAPABLE
 endif
 
-ifeq ($(TARGET_SOC),exynos5410)
-	LOCAL_CFLAGS += -DSOC_EXYNOS5410
-endif
-
 LOCAL_CFLAGS += -DLOG_TAG=\"hwcomposer\"
 
 LOCAL_C_INCLUDES := \

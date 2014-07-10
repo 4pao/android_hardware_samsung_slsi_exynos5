@@ -13,18 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "ExynosHWC.h"
+
 #if defined(USES_CEC)
 #include "libcec.h"
 #endif
-
-#ifdef HWC_SERVICES
-#include "../libhwcService/ExynosHWCService.h"
-namespace android {
-class ExynosHWCService;
-}
-#endif
-
-#include "ExynosHWC.h"
 
 static void exynos5_cleanup_gsc_m2m(exynos5_hwc_composer_device_1_t *pdev,
         size_t gsc_idx);
@@ -127,7 +120,6 @@ static inline bool gsc_dst_cfg_changed(exynos_gsc_img &c1, exynos_gsc_img &c2)
             c1.h != c2.h ||
             c1.format != c2.format ||
             c1.rot != c2.rot ||
-            c1.narrowRgb != c2.narrowRgb ||
             c1.cacheable != c2.cacheable ||
             c1.drmMode != c2.drmMode;
 }
@@ -155,6 +147,8 @@ static enum s3c_fb_pixel_format exynos5_format_to_s3c_format(int format)
         return S3C_FB_PIXEL_FORMAT_RGBA_8888;
     case HAL_PIXEL_FORMAT_RGBX_8888:
         return S3C_FB_PIXEL_FORMAT_RGBX_8888;
+    case HAL_PIXEL_FORMAT_RGBA_5551:
+        return S3C_FB_PIXEL_FORMAT_RGBA_5551;
     case HAL_PIXEL_FORMAT_RGB_565:
         return S3C_FB_PIXEL_FORMAT_RGB_565;
     case HAL_PIXEL_FORMAT_BGRA_8888:
@@ -181,6 +175,8 @@ static bool exynos5_format_is_rgb(int format)
     case HAL_PIXEL_FORMAT_RGB_888:
     case HAL_PIXEL_FORMAT_RGB_565:
     case HAL_PIXEL_FORMAT_BGRA_8888:
+    case HAL_PIXEL_FORMAT_RGBA_5551:
+    case HAL_PIXEL_FORMAT_RGBA_4444:
 #ifdef EXYNOS_SUPPORT_BGRX_8888
     case HAL_PIXEL_FORMAT_BGRX_8888:
 #endif
@@ -199,7 +195,6 @@ static bool exynos5_format_is_supported_by_gscaler(int format)
     case HAL_PIXEL_FORMAT_EXYNOS_YV12:
     case HAL_PIXEL_FORMAT_YV12:
     case HAL_PIXEL_FORMAT_EXYNOS_YCrCb_420_SP:
-    case HAL_PIXEL_FORMAT_EXYNOS_YCrCb_420_SP_FULL:
     case HAL_PIXEL_FORMAT_YCrCb_420_SP:
     case HAL_PIXEL_FORMAT_YCbCr_420_SP:
     case HAL_PIXEL_FORMAT_YCbCr_420_SP_TILED:
@@ -232,6 +227,8 @@ static uint8_t exynos5_format_to_bpp(int format)
 #endif
         return 32;
 
+    case HAL_PIXEL_FORMAT_RGBA_5551:
+    case HAL_PIXEL_FORMAT_RGBA_4444:
     case HAL_PIXEL_FORMAT_RGB_565:
         return 16;
 
@@ -247,9 +244,6 @@ static bool is_x_aligned(const hwc_layer_1_t &layer, int format)
         return true;
 
     uint8_t bpp = exynos5_format_to_bpp(format);
-    if (!bpp)
-        return false;
-
     uint8_t pixel_alignment = 32 / bpp;
 
     return (layer.displayFrame.left % pixel_alignment) == 0 &&
@@ -273,8 +267,6 @@ static uint32_t exynos5_format_to_gsc_format(int format)
         return HAL_PIXEL_FORMAT_BGRA_8888;
     case HAL_PIXEL_FORMAT_BGRA_8888:
         return HAL_PIXEL_FORMAT_RGBA_8888;
-    case HAL_PIXEL_FORMAT_EXYNOS_YCrCb_420_SP_FULL:
-        return HAL_PIXEL_FORMAT_EXYNOS_YCrCb_420_SP;
     default:
         return format;
     }
@@ -429,9 +421,6 @@ static bool exynos5_supports_gscaler(struct exynos5_hwc_composer_device_1_t *pde
         }
     }
 #endif
-
-    if ((format == HAL_PIXEL_FORMAT_YV12) && (handle->stride % 32))
-        return false;
 
     /* check whether GSC can handle with M2M */
     return exynos5_format_is_supported_by_gscaler(format) &&
@@ -639,6 +628,11 @@ static unsigned int formatValueHAL2G2D(int hal_format,
     case HAL_PIXEL_FORMAT_RGB_565:
         *g2d_format = CF_RGB_565;
         *g2d_order  = AX_RGB;
+        *g2d_bpp    = 2;
+        break;
+    case HAL_PIXEL_FORMAT_RGBA_4444:
+        *g2d_format = CF_ARGB_4444;
+        *g2d_order  = AX_BGR;
         *g2d_bpp    = 2;
         break;
         /* 32bpp */
@@ -1050,8 +1044,8 @@ static int hdmi_output(struct exynos5_hwc_composer_device_1_t *dev,
             memset(&fmt, 0, sizeof(fmt));
             fmt.type  = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
             if (hl.id == 0) {
-                fmt.fmt.pix_mp.width   = ALIGN(dev->hdmi_w, 16);
-                fmt.fmt.pix_mp.height  = ALIGN(dev->hdmi_h, 16);
+                fmt.fmt.pix_mp.width   = dev->hdmi_w;
+                fmt.fmt.pix_mp.height  = dev->hdmi_h;
             } else {
                 fmt.fmt.pix_mp.width   = h->stride;
                 fmt.fmt.pix_mp.height  = cfg.h;
@@ -1451,7 +1445,7 @@ bool exynos5_supports_overlay(hwc_layer_1_t &layer, size_t i,
         return false;
     }
 
-    if (exynos5_visible_width(layer, handle->format, pdev) <= BURSTLEN_BYTES) {
+    if (exynos5_visible_width(layer, handle->format, pdev) < BURSTLEN_BYTES) {
         ALOGV("\tlayer %u: visible area is too narrow", i);
         return false;
     }
@@ -1578,7 +1572,7 @@ static void exynos5_skip_static_layers(exynos5_hwc_composer_device_1_t *pdev,
     pdev->virtual_ovly_flag = 0;
     pdev->last_ovly_win_idx = -1;
 
-    if (pdev->bypass_skip_static_layer)
+    if (pdev->is_3layer_overlapped)
         return;
 
     if (contents->flags & HWC_GEOMETRY_CHANGED) {
@@ -1603,7 +1597,7 @@ static void exynos5_skip_static_layers(exynos5_hwc_composer_device_1_t *pdev,
     if (init_flag == 1) {
         for (size_t i = last_ovly_lay_idx; i < contents->numHwLayers -1; i++) {
             hwc_layer_1_t &layer = contents->hwLayers[i];
-            if (!layer.handle || (layer.flags & HWC_SKIP_LAYER) || (pdev->last_lay_hnd[i - last_ovly_lay_idx] !=  layer.handle)) {
+            if (!layer.handle || (pdev->last_lay_hnd[i - last_ovly_lay_idx] !=  layer.handle)) {
                 init_flag = 0;
                 return;
             }
@@ -1631,27 +1625,6 @@ static void exynos5_skip_static_layers(exynos5_hwc_composer_device_1_t *pdev,
 }
 #endif
 
-static size_t get_pixels_required(exynos5_hwc_composer_device_1_t *pdev,
-        hwc_layer_1_t &layer)
-{
-    uint32_t w = WIDTH(layer.displayFrame);
-    uint32_t h = HEIGHT(layer.displayFrame);
-
-    if (layer.displayFrame.left < 0)
-        w -= (-layer.displayFrame.left);
-
-    if (layer.displayFrame.right > pdev->xres)
-        w -= layer.displayFrame.right - pdev->xres;
-
-    if (layer.displayFrame.top < 0)
-        h -= (-layer.displayFrame.top);
-
-    if (layer.displayFrame.bottom > pdev->yres)
-        h -= layer.displayFrame.bottom - pdev->yres;
-
-    return w*h;
-}
-
 static int exynos5_prepare_fimd(exynos5_hwc_composer_device_1_t *pdev,
         hwc_display_contents_1_t* contents)
 {
@@ -1660,6 +1633,7 @@ static int exynos5_prepare_fimd(exynos5_hwc_composer_device_1_t *pdev,
     memset(pdev->bufs.gsc_map, 0, sizeof(pdev->bufs.gsc_map));
 
     bool force_fb = pdev->force_gpu;
+
 
 #ifdef USES_WFD
     if (pdev->wfd_enabled && pdev->wfd_force_transform)
@@ -1841,7 +1815,6 @@ retry:
         pdev->mS3DMode = S3D_MODE_DISABLED;
 #endif
 
-    first_fb = min(first_fb, (size_t)NUM_HW_WINDOWS-1);
     // can't composite overlays sandwiched between framebuffers
     if (fb_needed) {
         for (size_t i = first_fb; i < last_fb; i++) {
@@ -1867,17 +1840,13 @@ retry:
     int gsc_idx;
 #endif
 #ifdef SKIP_STATIC_LAYER_COMP
-    pdev->bypass_skip_static_layer = false;
+    pdev->is_3layer_overlapped = false;
 #endif
-
-    int pixel_used[MAX_NUM_FIMD_DMA_CH];
     do {
-        android::Vector<hwc_rect> rects[MAX_NUM_FIMD_DMA_CH];
-        android::Vector<hwc_rect> overlaps[MAX_NUM_FIMD_DMA_CH];
-        int dma_ch_idx;
-        int win_idx = 0 ;
-        size_t windows_left;
-        memset(&pixel_used[0], 0, sizeof(pixel_used));
+        android::Vector<hwc_rect> rects;
+        android::Vector<hwc_rect> overlaps;
+        size_t pixels_left, windows_left;
+
         gsc_used = false;
 
         if (fb_needed) {
@@ -1885,17 +1854,17 @@ retry:
             fb_rect.top = fb_rect.left = 0;
             fb_rect.right = pdev->xres - 1;
             fb_rect.bottom = pdev->yres - 1;
-            dma_ch_idx = FIMD_DMA_CH_IDX[first_fb];
-            pixel_used[dma_ch_idx] = pdev->xres * pdev->yres;
-            win_idx = (win_idx == first_fb) ? (win_idx + 1) : win_idx;
+            pixels_left = MAX_PIXELS - pdev->xres * pdev->yres;
 #ifdef USE_FB_PHY_LINEAR
             windows_left = NUM_HW_WIN_FB_PHY - 1;
 #else
             windows_left = NUM_HW_WINDOWS - 1;
 #endif
-            rects[dma_ch_idx].push_back(fb_rect);
+
+            rects.push_back(fb_rect);
         }
         else {
+            pixels_left = MAX_PIXELS;
 #ifdef USE_FB_PHY_LINEAR
             windows_left = 1;
 #else
@@ -1927,13 +1896,10 @@ retry:
                 windows_left--;
                 continue;
             }
-            dma_ch_idx = FIMD_DMA_CH_IDX[win_idx];
-            size_t pixels_needed = get_pixels_required(pdev, layer);
 
-            bool can_compose = windows_left && (win_idx < NUM_HW_WINDOWS) &&
-                            ((pixel_used[dma_ch_idx] + pixels_needed) <=
-                            pdev->fimd_dma_chan_max_bw[dma_ch_idx]);
-
+            size_t pixels_needed = WIDTH(layer.displayFrame) *
+                    HEIGHT(layer.displayFrame);
+            bool can_compose = windows_left && pixels_needed <= pixels_left;
             bool gsc_required = exynos5_requires_gscaler(layer, handle->format);
             if (gsc_required) {
 #ifdef DUAL_VIDEO_OVERLAY_SUPPORT
@@ -1947,25 +1913,14 @@ retry:
             hwc_rect_t visible_rect = layer.displayFrame;
             visible_rect.right--; visible_rect.bottom--;
 
-            if (can_compose) {
-                switch (pdev->fimd_dma_chan_max_overlap_cnt[dma_ch_idx]) {
-                case 1: // It means, no layer overlap is allowed
-                    for (size_t j = 0; j < rects[dma_ch_idx].size(); j++)
-                         if (intersect(visible_rect, rects[dma_ch_idx].itemAt(j)))
-                            can_compose = false;
-                    break;
-                case 2: //It means, upto 2 layer overlap is allowed.
-                    for (size_t j = 0; j < overlaps[dma_ch_idx].size(); j++)
-                        if (intersect(visible_rect, overlaps[dma_ch_idx].itemAt(j)))
-                            can_compose = false;
-                    break;
-                default:
-                    break;
-                }
+            // no more than 2 layers can overlap on a given pixel
+            for (size_t j = 0; can_compose && j < overlaps.size(); j++) {
+                if (intersect(visible_rect, overlaps.itemAt(j))) {
+                    can_compose = false;
 #ifdef SKIP_STATIC_LAYER_COMP
-                if (!can_compose)
-                    pdev->bypass_skip_static_layer = true;
+                    pdev->is_3layer_overlapped = true;;
 #endif
+                }
             }
 
             if (!can_compose) {
@@ -1979,21 +1934,16 @@ retry:
                     last_fb = max(i, last_fb);
                 }
                 changed = true;
-                first_fb = min(first_fb, (size_t)NUM_HW_WINDOWS-1);
                 break;
             }
 
-            for (size_t j = 0; j < rects[dma_ch_idx].size(); j++) {
-                const hwc_rect_t &other_rect = rects[dma_ch_idx].itemAt(j);
+            for (size_t j = 0; j < rects.size(); j++) {
+                const hwc_rect_t &other_rect = rects.itemAt(j);
                 if (intersect(visible_rect, other_rect))
-                    overlaps[dma_ch_idx].push_back(intersection(visible_rect, other_rect));
+                    overlaps.push_back(intersection(visible_rect, other_rect));
             }
-
-            rects[dma_ch_idx].push_back(visible_rect);
-            pixel_used[dma_ch_idx] += pixels_needed;
-            win_idx++;
-            win_idx = (win_idx == first_fb) ? (win_idx + 1) : win_idx;
-            win_idx = min(win_idx, (int)NUM_HW_WINDOWS - 1);
+            rects.push_back(visible_rect);
+            pixels_left -= pixels_needed;
             windows_left--;
             if (gsc_required) {
                 gsc_used = true;
@@ -2019,7 +1969,6 @@ retry:
         if (fb_needed && i == first_fb) {
             ALOGV("assigning framebuffer to window %u\n",
                     nextWindow);
-            pdev->bufs.fb_window = nextWindow;
             nextWindow++;
             continue;
         }
@@ -2057,10 +2006,6 @@ retry:
                          */
                          ALOGV("DRM video layer-%d display is skipped on LCD", i);
                          pdev->bufs.overlay_map[nextWindow] = -1;
-                         gsc_used = false;
-#if defined(DUAL_VIDEO_OVERLAY_SUPPORT)
-                         gsc_layers--;
-#endif
                          continue;
                     }
 #endif
@@ -2117,13 +2062,15 @@ retry:
 #endif
 #endif
 
-    if (!fb_needed)
-        pdev->bufs.fb_window = NO_FB_NEEDED;
+    if (fb_needed) {
 #if defined(FORCE_YUV_OVERLAY)
-    else
         if (pdev->popup_play_yuv_contents)
             pdev->bufs.fb_window = 1;
+    else
 #endif
+            pdev->bufs.fb_window = first_fb;
+    } else
+        pdev->bufs.fb_window = NO_FB_NEEDED;
 
 #ifdef HANDLE_HWC_SINGLE_LAYER
     /*
@@ -2133,22 +2080,6 @@ retry:
      */
      if (contents->numHwLayers <= 1)
          pdev->bufs.fb_window = 0;
-#endif
-
-#ifdef FIMD_DMA_BW_BALANCE
-    if ((pdev->bufs.overlay_map[3] != -1) &&
-#ifdef SKIP_STATIC_LAYER_COMP
-        (!pdev->virtual_ovly_flag) &&
-#endif
-        (pdev->bufs.overlay_map[4] == -1) && (pdev->bufs.fb_window != 4)) {
-        if (pdev->bufs.fb_window == 3)
-            pdev->bufs.fb_window = 4;
-        pdev->bufs.overlay_map[4] = pdev->bufs.overlay_map[3];
-        pdev->bufs.gsc_map[4].mode = pdev->bufs.gsc_map[3].mode;
-        pdev->bufs.gsc_map[4].idx = pdev->bufs.gsc_map[3].idx;
-        pdev->bufs.overlay_map[3] = -1;
-        pdev->bufs.gsc_map[3].idx = 0;
-    }
 #endif
 
     return 0;
@@ -2324,11 +2255,7 @@ static int exynos5_prepare_hdmi(exynos5_hwc_composer_device_1_t *pdev,
 
 #if defined(GSC_VIDEO)
             if (((exynos5_get_drmMode(h->flags) == SECURE_DRM) || (h->flags & GRALLOC_USAGE_EXTERNAL_DISP)) &&
-#ifdef SUPPORT_GSC_LOCAL_PATH
-                        exynos5_supports_gscaler(pdev, layer, h->format, false, 0)) {
-#else
                         exynos5_supports_gscaler(pdev, layer, h->format, false)) {
-#endif
 #else
             if (exynos5_get_drmMode(h->flags) == SECURE_DRM) {
 #endif
@@ -2586,15 +2513,11 @@ static int exynos5_config_gsc_m2m(hwc_layer_1_t &layer,
         src_cfg.uaddr = src_handle->fd1;
         src_cfg.vaddr = src_handle->fd2;
     }
-
-    if (src_handle->format != HAL_PIXEL_FORMAT_EXYNOS_YCrCb_420_SP_FULL)
-        src_cfg.format = src_handle->format;
-    else
-        src_cfg.format = HAL_PIXEL_FORMAT_EXYNOS_YCrCb_420_SP;
-
+    src_cfg.format = exynos5_format_to_gsc_format(src_handle->format);
     src_cfg.drmMode = !!(exynos5_get_drmMode(src_handle->flags) == SECURE_DRM);
     src_cfg.acquireFenceFd = layer.acquireFenceFd;
     src_cfg.mem_type = GSC_MEM_DMABUF;
+    layer.acquireFenceFd = -1;
 
 #ifdef SUPPORT_SMALL_DRM_VIDEO
     if (pdev->need_gsc_op_twice) {
@@ -2651,10 +2574,7 @@ static int exynos5_config_gsc_m2m(hwc_layer_1_t &layer,
     dst_cfg.drmMode = src_cfg.drmMode;
     dst_cfg.format = dst_format;
     dst_cfg.mem_type = GSC_MEM_DMABUF;
-    if (src_handle->format == HAL_PIXEL_FORMAT_EXYNOS_YCrCb_420_SP_FULL)
-        dst_cfg.narrowRgb = 0;
-    else
-        dst_cfg.narrowRgb = !exynos5_format_is_rgb(src_handle->format);
+    dst_cfg.narrowRgb = !exynos5_format_is_rgb(src_handle->format);
     if (dst_cfg.drmMode)
         align_crop_and_center(dst_cfg.w, dst_cfg.h, sourceCrop,
                 GSC_DST_CROP_W_ALIGNMENT_RGB888);
@@ -2695,8 +2615,8 @@ static int exynos5_config_gsc_m2m(hwc_layer_1_t &layer,
         } else
 #endif
         if (gsc_idx == HDMI_GSC_IDX) {
-            w = ALIGN(pdev->hdmi_w, 16);
-            h = ALIGN(pdev->hdmi_h, 16);
+            w = pdev->hdmi_w;
+            h = pdev->hdmi_h;
         } else {
             w = ALIGN(dst_cfg.w, GSC_DST_W_ALIGNMENT_RGB888);
             h = ALIGN(dst_cfg.h, GSC_DST_H_ALIGNMENT_RGB888);
@@ -2765,15 +2685,14 @@ static int exynos5_config_gsc_m2m(hwc_layer_1_t &layer,
 
 #ifdef GSC_SKIP_DUPLICATE_FRAME_PROCESSING
     if (gsc_data->last_gsc_lay_hnd == (uint32_t)layer.handle) {
-        if (layer.acquireFenceFd >= 0)
+        if (layer.acquireFenceFd)
             close(layer.acquireFenceFd);
 
         layer.releaseFenceFd = -1;
-        layer.acquireFenceFd = -1;
         gsc_data->dst_cfg.releaseFenceFd = -1;
 
         gsc_data->current_buf = (gsc_data->current_buf + NUM_GSC_DST_BUFS - 1) % NUM_GSC_DST_BUFS;
-        if (gsc_data->dst_buf_fence[gsc_data->current_buf] >= 0) {
+        if (gsc_data->dst_buf_fence[gsc_data->current_buf]) {
             close (gsc_data->dst_buf_fence[gsc_data->current_buf]);
             gsc_data->dst_buf_fence[gsc_data->current_buf] = -1;
         }
@@ -2783,7 +2702,6 @@ static int exynos5_config_gsc_m2m(hwc_layer_1_t &layer,
     }
 #endif
 
-    layer.acquireFenceFd = -1;
 #ifdef SUPPORT_SMALL_DRM_VIDEO
     if (pdev->need_gsc_op_twice) {
         mid_cfg.acquireFenceFd = gsc_data->mid_buf_fence[gsc_data->current_buf];
@@ -3131,15 +3049,12 @@ static int exynos5_post_fimd(exynos5_hwc_composer_device_1_t *pdev,
                 int gsc_idx = pdata->gsc_map[i].idx;
                 exynos5_gsc_data_t &gsc = pdev->gsc[gsc_idx];
 
-#ifdef SOC_EXYNOS5410
-		int dst_format = HAL_PIXEL_FORMAT_BGRA_8888;
-
-		if (exynos5_format_is_rgb(handle->format) &&
-				handle->format != HAL_PIXEL_FORMAT_RGB_565)
-			dst_format = HAL_PIXEL_FORMAT_RGBX_8888;
-#else
-		int dst_format = HAL_PIXEL_FORMAT_RGBX_8888;
-#endif
+                // RGBX8888 surfaces are already in the right color order from the GPU,
+                // RGB565 and YUV surfaces need the Gscaler to swap R & B
+                int dst_format = HAL_PIXEL_FORMAT_BGRA_8888;
+                if (exynos5_format_is_rgb(handle->format) &&
+                                handle->format != HAL_PIXEL_FORMAT_RGB_565)
+                    dst_format = HAL_PIXEL_FORMAT_RGBX_8888;
 
                 hwc_rect_t sourceCrop = { 0, 0,
                         WIDTH(layer.displayFrame), HEIGHT(layer.displayFrame) };
@@ -3169,7 +3084,6 @@ static int exynos5_post_fimd(exynos5_hwc_composer_device_1_t *pdev,
                 private_handle_t *dst_handle =
                         private_handle_t::dynamicCast(dst_buf);
                 int fence = gsc.dst_cfg.releaseFenceFd;
-
                 exynos5_config_handle(dst_handle, sourceCrop,
                         layer.displayFrame, layer.blending, fence, config[i],
                         pdev);
@@ -3425,17 +3339,9 @@ static int exynos5_set_hdmi(exynos5_hwc_composer_device_1_t *pdev,
             if (exynos5_get_drmMode(h->flags) == SECURE_DRM) {
 #endif
                 exynos5_gsc_data_t &gsc = pdev->gsc[HDMI_GSC_IDX];
-
-#ifdef SOC_EXYNOS5410
-		int ret = exynos5_config_gsc_m2m(layer, pdev, &gsc,
-						gsc_idx,
-						HAL_PIXEL_FORMAT_RGBX_8888, NULL);
-#else
-		int ret = exynos5_config_gsc_m2m(layer, pdev, &gsc,
-						gsc_idx,
-						HAL_PIXEL_FORMAT_BGRA_8888, NULL);
-#endif
-
+                int ret = exynos5_config_gsc_m2m(layer, pdev, &gsc,
+                                                 gsc_idx,
+                                                 HAL_PIXEL_FORMAT_RGBX_8888, NULL);
                 if (ret < 0) {
                     ALOGE("failed to configure gscaler for video layer");
                     continue;
@@ -3750,7 +3656,7 @@ int exynos_getCompModeSwitch(struct exynos5_hwc_composer_device_1_t *pdev)
     }
     pdev->LastModeSwitchTimeStamp = pdev->LastVsyncTimeStamp;
     Temp = (VSYNC_INTERVAL * 60) / TimeStampDiff;
-    pdev->setCallCnt = (int)(pdev->setCallCnt * Temp + 0.5);
+    pdev->setCallCnt = (int)(pdev->setCallCnt * Temp);
 
     /*
      * FPS estimation.
@@ -4377,15 +4283,6 @@ static int exynos5_open(const struct hw_module_t *module, const char *name,
           "refresh rate = %d Hz\n",
           dev->xres, dev->yres, info.width, dev->xdpi / 1000.0,
           info.height, dev->ydpi / 1000.0, refreshRate);
-#ifdef FIMD_BW_OVERLAP_CHECK
-    fimd_bw_overlap_limits_init(dev->xres, dev->yres,
-                    dev->fimd_dma_chan_max_bw, dev->fimd_dma_chan_max_overlap_cnt);
-#else
-    for (size_t i = 0; i < MAX_NUM_FIMD_DMA_CH; i++) {
-        dev->fimd_dma_chan_max_bw[i] =2560 * 1600;
-        dev->fimd_dma_chan_max_overlap_cnt[i] = 1;
-    }
-#endif
 
     for (size_t i = 0; i < NUM_GSC_UNITS; i++)
         for (size_t j = 0; j < NUM_GSC_DST_BUFS; j++)
@@ -4416,10 +4313,6 @@ static int exynos5_open(const struct hw_module_t *module, const char *name,
     }
 #endif
     dev->vsync_fd = open(VSYNC_DEV_NAME, O_RDONLY);
-#ifdef TRY_SECOND_VSYNC_DEV
-    if (dev->vsync_fd < 0)
-        dev->vsync_fd = open(VSYNC_DEV_NAME2, O_RDONLY);
-#endif
     if (dev->vsync_fd < 0) {
         ALOGE("failed to open vsync attribute");
         ret = dev->vsync_fd;
@@ -4427,7 +4320,7 @@ static int exynos5_open(const struct hw_module_t *module, const char *name,
     }
 #if !defined(HDMI_INCAPABLE)
     sw_fd = open("/sys/class/switch/hdmi/state", O_RDONLY);
-    if (sw_fd >= 0) {
+    if (sw_fd) {
         char val;
         if (read(sw_fd, &val, 1) == 1 && val == '1') {
             dev->hdmi_hpd = true;
@@ -4436,7 +4329,6 @@ static int exynos5_open(const struct hw_module_t *module, const char *name,
                 dev->hdmi_hpd = false;
             }
         }
-        close(sw_fd);
     }
 #endif
     dev->base.common.tag = HARDWARE_DEVICE_TAG;
@@ -4457,9 +4349,8 @@ static int exynos5_open(const struct hw_module_t *module, const char *name,
     *device = &dev->base.common;
 
 #ifdef HWC_SERVICES
-    android::ExynosHWCService   *mHWCService;
-    mHWCService = android::ExynosHWCService::getExynosHWCService();
-    mHWCService->setExynosHWCCtx(dev);
+    dev->mHWCService = android::ExynosHWCService::getExynosHWCService();
+    dev->mHWCService->setExynosHWCCtx(dev);
     dev->mHdmiResolutionChanged = false;
     dev->mHdmiResolutionHandled = true;
 #if defined(S3D_SUPPORT)

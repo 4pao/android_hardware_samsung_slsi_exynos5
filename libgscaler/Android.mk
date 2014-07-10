@@ -24,23 +24,12 @@ LOCAL_SHARED_LIBRARIES := liblog libutils libcutils libexynosutils libexynosv4l2
 LOCAL_SHARED_LIBRARIES += libMcClient
 LOCAL_STATIC_LIBRARIES := libsecurepath
 
-ifeq ($(BOARD_USES_ONLY_GSC0_GSC1),true)
-	LOCAL_CFLAGS += -DUSES_ONLY_GSC0_GSC1
-endif
-
-ifeq ($(BOARD_USES_SCALER), true)
-LOCAL_CFLAGS += -DUSES_SCALER
-LOCAL_SHARED_LIBRARIES += libexynosscaler
-endif
-
 LOCAL_C_INCLUDES := \
 	$(LOCAL_PATH)/../include \
 	$(TOP)/hardware/samsung_slsi/exynos/include \
 	$(TOP)/hardware/samsung_slsi/exynos/libexynosutils
 
-LOCAL_SRC_FILES := \
-	libgscaler_obj.cpp \
-	libgscaler.cpp
+LOCAL_SRC_FILES := exynos_gscaler.c
 
 LOCAL_MODULE_TAGS := eng
 LOCAL_MODULE := libexynosgscaler

@@ -170,6 +170,8 @@ static enum s3c_fb_pixel_format exynos5_format_to_s3c_format(int format)
         return S3C_FB_PIXEL_FORMAT_RGBA_8888;
     case HAL_PIXEL_FORMAT_RGBX_8888:
         return S3C_FB_PIXEL_FORMAT_RGBX_8888;
+    case HAL_PIXEL_FORMAT_RGBA_5551:
+        return S3C_FB_PIXEL_FORMAT_RGBA_5551;
     case HAL_PIXEL_FORMAT_RGB_565:
         return S3C_FB_PIXEL_FORMAT_RGB_565;
     case HAL_PIXEL_FORMAT_BGRA_8888:
@@ -196,6 +198,8 @@ static bool exynos5_format_is_rgb(int format)
     case HAL_PIXEL_FORMAT_RGB_888:
     case HAL_PIXEL_FORMAT_RGB_565:
     case HAL_PIXEL_FORMAT_BGRA_8888:
+    case HAL_PIXEL_FORMAT_RGBA_5551:
+    case HAL_PIXEL_FORMAT_RGBA_4444:
 #ifdef EXYNOS_SUPPORT_BGRX_8888
     case HAL_PIXEL_FORMAT_BGRX_8888:
 #endif
@@ -246,6 +250,8 @@ static uint8_t exynos5_format_to_bpp(int format)
 #endif
         return 32;
 
+    case HAL_PIXEL_FORMAT_RGBA_5551:
+    case HAL_PIXEL_FORMAT_RGBA_4444:
     case HAL_PIXEL_FORMAT_RGB_565:
         return 16;
 
@@ -608,6 +614,11 @@ static unsigned int formatValueHAL2G2D(int hal_format,
     case HAL_PIXEL_FORMAT_RGB_565:
         *g2d_format = CF_RGB_565;
         *g2d_order  = AX_RGB;
+        *g2d_bpp    = 2;
+        break;
+    case HAL_PIXEL_FORMAT_RGBA_4444:
+        *g2d_format = CF_ARGB_4444;
+        *g2d_order  = AX_BGR;
         *g2d_bpp    = 2;
         break;
         /* 32bpp */

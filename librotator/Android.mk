@@ -1,4 +1,4 @@
-# Copyright (C) 2013 The Android Open Source Project
+# Copyright (C) 2008 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,10 +25,10 @@ LOCAL_C_INCLUDES := \
 	$(TOP)/hardware/samsung_slsi/exynos/include \
 	$(TOP)/hardware/samsung_slsi/exynos/libexynosutils
 
-LOCAL_SRC_FILES := libscaler.cpp
+LOCAL_SRC_FILES := exynos_rotator.c
 
 LOCAL_MODULE_TAGS := eng
-LOCAL_MODULE := libexynosscaler
+LOCAL_MODULE := libexynosrotator
 include $(BUILD_SHARED_LIBRARY)
 
 endif

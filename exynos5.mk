@@ -22,11 +22,6 @@ PRODUCT_PACKAGES := \
 	libOMX.Exynos.MPEG4.Encoder \
 	libOMX.Exynos.AVC.Encoder
 
-ifeq ($(BOARD_USE_VP8ENC_SUPPORT), true)
-PRODUCT_PACKAGES += \
-	libOMX.Exynos.VP8.Encoder
-endif
-
 # ALP Audio
 PRODUCT_PACKAGES += \
 	libOMX.Exynos.MP3.Decoder
